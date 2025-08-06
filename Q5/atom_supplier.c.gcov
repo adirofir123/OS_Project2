@@ -1,0 +1,73 @@
+        -:    0:Source:atom_supplier.c
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <arpa/inet.h>
+        -:    6:#include <netdb.h>
+        -:    7:#include <sys/un.h>
+        -:    8:#include <getopt.h>
+        -:    9:
+        -:   10:#define BUF_SIZE 1024
+        -:   11:
+       12:   12:int main(int argc, char *argv[]) {
+       12:   13:    char *host = NULL, *uds_path = NULL;
+       12:   14:    int port = -1;
+        -:   15:    int opt;
+       21:   16:    while ((opt = getopt(argc, argv, "h:p:f:")) != -1) {
+        9:   17:        switch(opt) {
+        3:   18:            case 'h':
+        3:   19:                host = strdup(optarg); break;
+        2:   20:            case 'p':
+        2:   21:                port = atoi(optarg); break;
+        4:   22:            case 'f':
+        4:   23:                uds_path = strdup(optarg); break;
+        -:   24:        }
+        -:   25:    }
+       12:   26:    if (((host || port > 0) && uds_path) || (!uds_path && (host == NULL || port <= 0))) {
+        6:   27:        fprintf(stderr, "Error: specify either -h <host> -p <port> (TCP) OR -f <UDS path> (UDS stream)\n");
+        6:   28:        exit(1);
+        -:   29:    }
+        -:   30:
+        -:   31:    int sockfd;
+        6:   32:    if (uds_path) {
+        -:   33:        // UDS STREAM
+        4:   34:        sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+       4*:   35:        if (sockfd < 0) { perror("socket"); exit(1); }
+        -:   36:        struct sockaddr_un serv_addr;
+        4:   37:        memset(&serv_addr, 0, sizeof(serv_addr));
+        4:   38:        serv_addr.sun_family = AF_UNIX;
+        4:   39:        strncpy(serv_addr.sun_path, uds_path, sizeof(serv_addr.sun_path)-1);
+        4:   40:        if (connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+        4:   41:            perror("connect UDS STREAM"); exit(1);
+        -:   42:        }
+    #####:   43:        printf("Connected via UDS stream. Type atom commands (e.g., ADD CARBON 5), type EXIT to quit:\n");
+        -:   44:    } else {
+        -:   45:        // TCP
+        -:   46:        struct sockaddr_in serv_addr;
+        -:   47:        struct hostent *he;
+        2:   48:        if ((he = gethostbyname(host)) == NULL) {
+        1:   49:            perror("gethostbyname"); exit(1);
+        -:   50:        }
+        1:   51:        if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    #####:   52:            perror("socket"); exit(1);
+        -:   53:        }
+        1:   54:        memset(&serv_addr, 0, sizeof(serv_addr));
+        1:   55:        serv_addr.sin_family = AF_INET;
+        1:   56:        serv_addr.sin_port = htons(port);
+        1:   57:        memcpy(&serv_addr.sin_addr, he->h_addr, he->h_length);
+        1:   58:        if (connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+    #####:   59:            perror("connect"); exit(1);
+        -:   60:        }
+        1:   61:        printf("Connected via TCP. Type atom commands (e.g., ADD CARBON 5), type EXIT to quit:\n");
+        -:   62:    }
+        -:   63:
+        -:   64:    char buf[BUF_SIZE];
+        1:   65:    while (fgets(buf, sizeof(buf), stdin)) {
+        1:   66:        write(sockfd, buf, strlen(buf));
+        1:   67:        if (strncmp(buf, "EXIT", 4) == 0) break;
+        -:   68:    }
+        1:   69:    close(sockfd);
+        1:   70:    printf("Exiting supplier_atom. Goodbye!\n");
+        1:   71:    return 0;
+        -:   72:}

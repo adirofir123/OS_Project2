@@ -1,0 +1,140 @@
+        -:    0:Source:molecule_requester.c
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <arpa/inet.h>
+        -:    6:#include <netdb.h>
+        -:    7:#include <sys/un.h>
+        -:    8:#include <getopt.h>
+        -:    9:#include <sys/time.h>
+        -:   10:#include <sys/select.h>
+        -:   11:
+        -:   12:#define BUF_SIZE 1024
+        -:   13:
+       15:   14:int main(int argc, char *argv[]) {
+       15:   15:    char *host = NULL, *uds_path = NULL;
+       15:   16:    int port = -1;
+        -:   17:    int opt;
+       45:   18:    while ((opt = getopt(argc, argv, "h:p:f:")) != -1) {
+       30:   19:        switch(opt) {
+       15:   20:            case 'h':
+       15:   21:                host = strdup(optarg); break;
+       15:   22:            case 'p':
+       15:   23:                port = atoi(optarg); break;
+    #####:   24:            case 'f':
+    #####:   25:                uds_path = strdup(optarg); break;
+        -:   26:        }
+        -:   27:    }
+      15*:   28:    if (((host || port > 0) && uds_path) || (!uds_path && (host == NULL || port <= 0))) {
+    #####:   29:        fprintf(stderr, "Error: specify either -h <host> -p <port> (UDP) OR -f <UDS path> (UDS datagram)\n");
+    #####:   30:        exit(1);
+        -:   31:    }
+        -:   32:
+        -:   33:    int sockfd;
+       15:   34:    if (uds_path) {
+        -:   35:        // UDS Datagram
+    #####:   36:        sockfd = socket(AF_UNIX, SOCK_DGRAM, 0);
+    #####:   37:        if (sockfd < 0) { perror("socket"); exit(1); }
+        -:   38:        struct sockaddr_un serv_addr, cli_addr;
+    #####:   39:        memset(&serv_addr, 0, sizeof(serv_addr));
+    #####:   40:        serv_addr.sun_family = AF_UNIX;
+    #####:   41:        strncpy(serv_addr.sun_path, uds_path, sizeof(serv_addr.sun_path)-1);
+        -:   42:
+        -:   43:        // נדרש bind לכתובת ייחודית ללקוח
+        -:   44:        char client_sock[256];
+    #####:   45:        snprintf(client_sock, sizeof(client_sock), "/tmp/molecule_req_%d.sock", getpid());
+    #####:   46:        memset(&cli_addr, 0, sizeof(cli_addr));
+    #####:   47:        cli_addr.sun_family = AF_UNIX;
+    #####:   48:        strncpy(cli_addr.sun_path, client_sock, sizeof(cli_addr.sun_path)-1);
+    #####:   49:        unlink(client_sock);
+    #####:   50:        if (bind(sockfd, (struct sockaddr*)&cli_addr, sizeof(cli_addr)) < 0) {
+    #####:   51:            perror("bind client UDS"); exit(1);
+        -:   52:        }
+        -:   53:
+    #####:   54:        printf("Type UDP requests (e.g., DELIVER WATER 3), type EXIT to quit:\n");
+        -:   55:        char buf[BUF_SIZE], reply[BUF_SIZE];
+    #####:   56:        while (1) {
+    #####:   57:            if (fgets(buf, sizeof(buf), stdin) == NULL)
+    #####:   58:                break;
+    #####:   59:            if (strncmp(buf, "EXIT", 4) == 0) {
+    #####:   60:                printf("Exiting molecule_requester. Goodbye!\n");
+    #####:   61:                break;
+        -:   62:            }
+    #####:   63:            ssize_t slen = sendto(sockfd, buf, strlen(buf), 0, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+    #####:   64:            if (slen < 0) { perror("sendto"); continue; }
+        -:   65:
+        -:   66:            // Timeout
+        -:   67:            fd_set readfds;
+    #####:   68:            FD_ZERO(&readfds);
+    #####:   69:            FD_SET(sockfd, &readfds);
+    #####:   70:            struct timeval tv = {3, 0};
+    #####:   71:            int retval = select(sockfd+1, &readfds, NULL, NULL, &tv);
+    #####:   72:            if (retval == -1) {
+    #####:   73:                perror("select");
+    #####:   74:                continue;
+    #####:   75:            } else if (retval == 0) {
+    #####:   76:                printf("No response from server (possibly due to SHUTDOWN). Exiting.\n");
+    #####:   77:                break;
+        -:   78:            } else {
+        -:   79:                struct sockaddr_un from_addr;
+    #####:   80:                socklen_t fromlen = sizeof(from_addr);
+    #####:   81:                ssize_t n = recvfrom(sockfd, reply, sizeof(reply)-1, 0, (struct sockaddr*)&from_addr, &fromlen);
+    #####:   82:                if (n < 0) { perror("recvfrom"); continue; }
+    #####:   83:                reply[n] = 0;
+    #####:   84:                printf("Server: %s", reply);
+        -:   85:            }
+        -:   86:        }
+    #####:   87:        close(sockfd);
+    #####:   88:        unlink(client_sock);
+    #####:   89:        return 0;
+        -:   90:    } else {
+        -:   91:        // UDP
+        -:   92:        struct sockaddr_in serv_addr;
+        -:   93:        struct hostent *he;
+       15:   94:        if ((he = gethostbyname(host)) == NULL) {
+    #####:   95:            perror("gethostbyname"); exit(1);
+        -:   96:        }
+       15:   97:        if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+    #####:   98:            perror("socket"); exit(1);
+        -:   99:        }
+       15:  100:        memset(&serv_addr, 0, sizeof(serv_addr));
+       15:  101:        serv_addr.sin_family = AF_INET;
+       15:  102:        serv_addr.sin_port = htons(port);
+       15:  103:        memcpy(&serv_addr.sin_addr, he->h_addr, he->h_length);
+        -:  104:
+       15:  105:        printf("Type UDP requests (e.g., DELIVER WATER 3), type EXIT to quit:\n");
+        -:  106:        char buf[BUF_SIZE], reply[BUF_SIZE];
+       17:  107:        while (1) {
+       32:  108:            if (fgets(buf, sizeof(buf), stdin) == NULL)
+       13:  109:                break;
+       19:  110:            if (strncmp(buf, "EXIT", 4) == 0) {
+        1:  111:                printf("Exiting molecule_requester. Goodbye!\n");
+        1:  112:                break;
+        -:  113:            }
+       18:  114:            ssize_t slen = sendto(sockfd, buf, strlen(buf), 0, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+      18*:  115:            if (slen < 0) { perror("sendto"); continue; }
+        -:  116:            fd_set readfds;
+      306:  117:            FD_ZERO(&readfds);
+       18:  118:            FD_SET(sockfd, &readfds);
+       18:  119:            struct timeval tv = {3, 0};
+       18:  120:            int retval = select(sockfd+1, &readfds, NULL, NULL, &tv);
+      18*:  121:            if (retval == -1) {
+    #####:  122:                perror("select");
+    #####:  123:                continue;
+       18:  124:            } else if (retval == 0) {
+        1:  125:                printf("No response from server (possibly due to SHUTDOWN). Exiting.\n");
+        1:  126:                break;
+        -:  127:            } else {
+        -:  128:                struct sockaddr_in from_addr;
+       17:  129:                socklen_t fromlen = sizeof(from_addr);
+       17:  130:                ssize_t n = recvfrom(sockfd, reply, sizeof(reply)-1, 0, (struct sockaddr*)&from_addr, &fromlen);
+      17*:  131:                if (n < 0) { perror("recvfrom"); continue; }
+       17:  132:                reply[n] = 0;
+       17:  133:                printf("Server: %s", reply);
+        -:  134:            }
+        -:  135:        }
+       15:  136:        close(sockfd);
+       15:  137:        return 0;
+        -:  138:    }
+        -:  139:}

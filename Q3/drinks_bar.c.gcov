@@ -1,0 +1,282 @@
+        -:    0:Source:drinks_bar.c
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <errno.h>
+        -:    6:#include <sys/socket.h>
+        -:    7:#include <arpa/inet.h>
+        -:    8:#include <netinet/in.h>
+        -:    9:#include <sys/select.h>
+        -:   10:#include <fcntl.h>
+        -:   11:
+        -:   12:#define MAX_ATOMS 1000000000000000000ULL
+        -:   13:#define BUF_SIZE 1024
+        -:   14:
+        -:   15:unsigned long long carbon = 0, oxygen = 0, hydrogen = 0;
+        -:   16:
+        -:   17:// מתכונים של מולקולות
+        -:   18:// WATER: H2O
+        -:   19:// CARBON DIOXIDE: CO2
+        -:   20:// ALCOHOL: C2H6O
+        -:   21:// GLUCOSE: C6H12O6
+        -:   22:
+        -:   23:// מבנה עזר לספירה זמנית
+        -:   24:typedef struct {
+        -:   25:    unsigned long long water, carbon_dioxide, alcohol, glucose;
+        -:   26:} MoleculeCounts;
+        -:   27:
+        7:   28:void print_state() {
+        7:   29:    printf("Warehouse State: CARBON=%llu OXYGEN=%llu HYDROGEN=%llu\n", carbon, oxygen, hydrogen);
+        7:   30:    fflush(stdout);
+        7:   31:}
+        -:   32:
+        -:   33:// -- שלב 1: ניהול מלאי אטומים ב-TCP --
+        6:   34:int handle_tcp_command(const char *buf) {
+        -:   35:    unsigned long long num;
+        6:   36:    if (sscanf(buf, "ADD CARBON %llu", &num) == 1) {
+       1*:   37:        if (carbon + num > MAX_ATOMS) num = MAX_ATOMS - carbon;
+        1:   38:        carbon += num;
+        1:   39:        print_state();
+        1:   40:        return 0;
+        5:   41:    } else if (sscanf(buf, "ADD OXYGEN %llu", &num) == 1) {
+       1*:   42:        if (oxygen + num > MAX_ATOMS) num = MAX_ATOMS - oxygen;
+        1:   43:        oxygen += num;
+        1:   44:        print_state();
+        1:   45:        return 0;
+        4:   46:    } else if (sscanf(buf, "ADD HYDROGEN %llu", &num) == 1) {
+       1*:   47:        if (hydrogen + num > MAX_ATOMS) num = MAX_ATOMS - hydrogen;
+        1:   48:        hydrogen += num;
+        1:   49:        print_state();
+        1:   50:        return 0;
+        3:   51:    } else if (strncmp(buf, "EXIT", 4) == 0) {
+        1:   52:        printf("Client requested to close its connection.\n");
+        1:   53:        fflush(stdout);
+        1:   54:        return 1;
+        -:   55:    } else {
+        2:   56:        fprintf(stderr, "Invalid command: %s", buf);
+        2:   57:        fflush(stderr);
+        2:   58:        return -1;
+        -:   59:    }
+        -:   60:}
+        -:   61:
+        -:   62:// -- שלב 2: בקשות ב-UDP ליצירת מולקולות --
+       10:   63:int handle_udp_command(const char *buf, char *msg, MoleculeCounts *mc) {
+        -:   64:    unsigned long long num;
+       10:   65:    if (sscanf(buf, "DELIVER WATER %llu", &num) == 1) {
+        3:   66:        if (hydrogen >= 2*num && oxygen >= num) {
+        1:   67:            hydrogen -= 2*num;
+        1:   68:            oxygen -= num;
+       1*:   69:            if (mc) mc->water += num;
+        1:   70:            snprintf(msg, BUF_SIZE, "SUPPLIED WATER %llu\n", num);
+        1:   71:            print_state();
+        1:   72:            return 1;
+        -:   73:        } else {
+        2:   74:            snprintf(msg, BUF_SIZE, "FAILED WATER %llu\n", num);
+        2:   75:            return 0;
+        -:   76:        }
+        7:   77:    } else if (sscanf(buf, "DELIVER CARBON DIOXIDE %llu", &num) == 1) {
+        2:   78:        if (carbon >= num && oxygen >= 2*num) {
+        1:   79:            carbon -= num;
+        1:   80:            oxygen -= 2*num;
+       1*:   81:            if (mc) mc->carbon_dioxide += num;
+        1:   82:            snprintf(msg, BUF_SIZE, "SUPPLIED CARBON DIOXIDE %llu\n", num);
+        1:   83:            print_state();
+        1:   84:            return 1;
+        -:   85:        } else {
+        1:   86:            snprintf(msg, BUF_SIZE, "FAILED CARBON DIOXIDE %llu\n", num);
+        1:   87:            return 0;
+        -:   88:        }
+        5:   89:    } else if (sscanf(buf, "DELIVER ALCOHOL %llu", &num) == 1) {
+        2:   90:        if (carbon >= 2*num && hydrogen >= 6*num && oxygen >= num) {
+        1:   91:            carbon -= 2*num;
+        1:   92:            hydrogen -= 6*num;
+        1:   93:            oxygen -= num;
+       1*:   94:            if (mc) mc->alcohol += num;
+        1:   95:            snprintf(msg, BUF_SIZE, "SUPPLIED ALCOHOL %llu\n", num);
+        1:   96:            print_state();
+        1:   97:            return 1;
+        -:   98:        } else {
+        1:   99:            snprintf(msg, BUF_SIZE, "FAILED ALCOHOL %llu\n", num);
+        1:  100:            return 0;
+        -:  101:        }
+        3:  102:    } else if (sscanf(buf, "DELIVER GLUCOSE %llu", &num) == 1) {
+        2:  103:        if (carbon >= 6*num && hydrogen >= 12*num && oxygen >= 6*num) {
+        1:  104:            carbon -= 6*num;
+        1:  105:            hydrogen -= 12*num;
+        1:  106:            oxygen -= 6*num;
+       1*:  107:            if (mc) mc->glucose += num;
+        1:  108:            snprintf(msg, BUF_SIZE, "SUPPLIED GLUCOSE %llu\n", num);
+        1:  109:            print_state();
+        1:  110:            return 1;
+        -:  111:        } else {
+        1:  112:            snprintf(msg, BUF_SIZE, "FAILED GLUCOSE %llu\n", num);
+        1:  113:            return 0;
+        -:  114:        }
+        -:  115:    } else {
+        1:  116:        fprintf(stderr, "Invalid UDP command: %s", buf);
+        1:  117:        snprintf(msg, BUF_SIZE, "ERROR INVALID COMMAND\n");
+        1:  118:        return -1;
+        -:  119:    }
+        -:  120:}
+        -:  121:
+        -:  122:// שלב 3: חישוב משקאות לפי המלאי הנוכחי של המולקולות
+        3:  123:void compute_molecule_counts(MoleculeCounts *mc) {
+        -:  124:    // מחשב כמה מולקולות יש מכל סוג, בלי להוריד מהמלאי
+        3:  125:    mc->water = (hydrogen/2 < oxygen) ? hydrogen/2 : oxygen;
+        3:  126:    mc->carbon_dioxide = (carbon < oxygen/2) ? carbon : oxygen/2;
+        3:  127:    mc->alcohol = carbon/2;
+        3:  128:    if (hydrogen/6 < mc->alcohol) mc->alcohol = hydrogen/6;
+       3*:  129:    if (oxygen < mc->alcohol) mc->alcohol = oxygen;
+        3:  130:    mc->glucose = carbon/6;
+        3:  131:    if (hydrogen/12 < mc->glucose) mc->glucose = hydrogen/12;
+       3*:  132:    if (oxygen/6 < mc->glucose) mc->glucose = oxygen/6;
+        3:  133:}
+        -:  134:
+        3:  135:void handle_bar_command(const char *buf) {
+        -:  136:    MoleculeCounts mc;
+        3:  137:    compute_molecule_counts(&mc);
+        3:  138:    if (strncmp(buf, "GEN SOFT DRINK", 14) == 0) {
+        -:  139:        // SOFT DRINK = WATER + CARBON DIOXIDE + GLUCOSE
+        1:  140:        unsigned long long min = mc.water;
+       1*:  141:        if (mc.carbon_dioxide < min) min = mc.carbon_dioxide;
+        1:  142:        if (mc.glucose < min) min = mc.glucose;
+        1:  143:        printf("SOFT DRINKS AVAILABLE: %llu\n", min);
+        2:  144:    } else if (strncmp(buf, "GEN VODKA", 9) == 0) {
+        -:  145:        // VODKA = WATER + ALCOHOL + GLUCOSE
+        1:  146:        unsigned long long min = mc.water;
+        1:  147:        if (mc.alcohol < min) min = mc.alcohol;
+        1:  148:        if (mc.glucose < min) min = mc.glucose;
+        1:  149:        printf("VODKA DRINKS AVAILABLE: %llu\n", min);
+        1:  150:    } else if (strncmp(buf, "GEN CHAMPAGNE", 13) == 0) {
+        -:  151:        // CHAMPAGNE = WATER + CARBON DIOXIDE + ALCOHOL
+        1:  152:        unsigned long long min = mc.water;
+       1*:  153:        if (mc.carbon_dioxide < min) min = mc.carbon_dioxide;
+        1:  154:        if (mc.alcohol < min) min = mc.alcohol;
+        1:  155:        printf("CHAMPAGNE DRINKS AVAILABLE: %llu\n", min);
+        -:  156:    } else {
+    #####:  157:        fprintf(stderr, "Invalid BAR command: %s", buf);
+        -:  158:    }
+        3:  159:    fflush(stdout);
+        3:  160:}
+        -:  161:
+        7:  162:int main(int argc, char *argv[]) {
+        7:  163:    if (argc != 3) {
+        4:  164:        fprintf(stderr, "Usage: %s <TCP port> <UDP port>\n", argv[0]);
+        4:  165:        exit(1);
+        -:  166:    }
+        3:  167:    int tcp_port = atoi(argv[1]);
+        3:  168:    int udp_port = atoi(argv[2]);
+        -:  169:
+        -:  170:    // TCP setup
+        3:  171:    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+       3*:  172:    if (listen_fd < 0) { perror("socket"); exit(1); }
+        -:  173:    struct sockaddr_in addr;
+        3:  174:    memset(&addr, 0, sizeof(addr));
+        3:  175:    addr.sin_family = AF_INET;
+        3:  176:    addr.sin_addr.s_addr = INADDR_ANY;
+        3:  177:    addr.sin_port = htons(tcp_port);
+        3:  178:    if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        1:  179:        perror("bind TCP"); close(listen_fd); exit(1);
+        -:  180:    }
+        2:  181:    if (listen(listen_fd, 10) < 0) {
+    #####:  182:        perror("listen"); close(listen_fd); exit(1);
+        -:  183:    }
+        -:  184:
+        -:  185:    // UDP setup
+        2:  186:    int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
+       2*:  187:    if (udp_sock < 0) { perror("socket UDP"); exit(1); }
+        -:  188:    struct sockaddr_in udp_addr;
+        2:  189:    memset(&udp_addr, 0, sizeof(udp_addr));
+        2:  190:    udp_addr.sin_family = AF_INET;
+        2:  191:    udp_addr.sin_addr.s_addr = INADDR_ANY;
+        2:  192:    udp_addr.sin_port = htons(udp_port);
+        2:  193:    if (bind(udp_sock, (struct sockaddr*)&udp_addr, sizeof(udp_addr)) < 0) {
+        1:  194:        perror("bind UDP"); close(udp_sock); exit(1);
+        -:  195:    }
+        -:  196:
+        -:  197:    // STDIN non-blocking
+        1:  198:    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+        1:  199:    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+        -:  200:
+        -:  201:    fd_set master;
+        1:  202:    int fdmax = listen_fd;
+        1:  203:    if (udp_sock > fdmax) fdmax = udp_sock;
+       1*:  204:    if (STDIN_FILENO > fdmax) fdmax = STDIN_FILENO;
+        -:  205:
+       17:  206:    FD_ZERO(&master);
+        1:  207:    FD_SET(listen_fd, &master);
+        1:  208:    FD_SET(udp_sock, &master);
+        1:  209:    FD_SET(STDIN_FILENO, &master);
+        -:  210:
+        1:  211:    printf("Bar Drinks server: TCP port %d, UDP port %d\n", tcp_port, udp_port);
+        1:  212:    printf("To close all connections type SHUTDOWN.\n");
+        -:  213:
+        1:  214:    int running = 1;
+       23:  215:    while (running) {
+       22:  216:        fd_set read_fds = master;
+       22:  217:        if (select(fdmax+1, &read_fds, NULL, NULL, NULL) == -1) {
+    #####:  218:            perror("select"); exit(1);
+        -:  219:        }
+      148:  220:        for (int i = 0; i <= fdmax; ++i) {
+      127:  221:            if (FD_ISSET(i, &read_fds)) {
+       22:  222:                if (i == listen_fd) {
+        -:  223:                    // חיבור TCP חדש
+        -:  224:                    struct sockaddr_in client_addr;
+        2:  225:                    socklen_t addrlen = sizeof(client_addr);
+        2:  226:                    int newfd = accept(listen_fd, (struct sockaddr*)&client_addr, &addrlen);
+       2*:  227:                    if (newfd == -1) { perror("accept"); continue; }
+        2:  228:                    FD_SET(newfd, &master);
+        2:  229:                    if (newfd > fdmax) fdmax = newfd;
+       20:  230:                } else if (i == udp_sock) {
+        -:  231:                    // הודעת UDP חדשה
+        -:  232:                    char buf[BUF_SIZE], reply[BUF_SIZE];
+        -:  233:                    struct sockaddr_in cliaddr;
+       10:  234:                    socklen_t len = sizeof(cliaddr);
+       10:  235:                    ssize_t n = recvfrom(udp_sock, buf, sizeof(buf)-1, 0, (struct sockaddr*)&cliaddr, &len);
+      10*:  236:                    if (n < 0) continue;
+       10:  237:                    buf[n] = 0;
+       10:  238:                    handle_udp_command(buf, reply, NULL);
+       10:  239:                    sendto(udp_sock, reply, strlen(reply), 0, (struct sockaddr*)&cliaddr, len);
+       10:  240:                } else if (i == STDIN_FILENO) {
+        -:  241:                    // קלט טרמינל (מקלדת)
+        -:  242:                    char input_buf[BUF_SIZE];
+        4:  243:                    if (fgets(input_buf, sizeof(input_buf), stdin)) {
+        4:  244:                        if (strncmp(input_buf, "SHUTDOWN", 8) == 0) {
+        1:  245:                            printf("Server shutting down by terminal command.\n");
+        7:  246:                            for (int j = 0; j <= fdmax; ++j) {
+        6:  247:                                if (FD_ISSET(j, &master) && j != listen_fd && j != udp_sock && j != STDIN_FILENO) {
+        1:  248:                                    close(j);
+        1:  249:                                    FD_CLR(j, &master);
+        -:  250:                                }
+        -:  251:                            }
+        1:  252:                            close(listen_fd);
+        1:  253:                            close(udp_sock);
+        1:  254:                            running = 0;
+        1:  255:                            break;
+        3:  256:                        } else if (strncmp(input_buf, "GEN", 3) == 0) {
+        3:  257:                            handle_bar_command(input_buf);
+        -:  258:                        }
+        -:  259:                    }
+        -:  260:                } else {
+        -:  261:                    // חיבור TCP קיים
+        -:  262:                    char buf[BUF_SIZE];
+        6:  263:                    ssize_t nbytes = recv(i, buf, sizeof(buf)-1, 0);
+        6:  264:                    if (nbytes <= 0) {
+    #####:  265:                        close(i);
+    #####:  266:                        FD_CLR(i, &master);
+        -:  267:                    } else {
+        6:  268:                        buf[nbytes] = '\0';
+        6:  269:                        int res = handle_tcp_command(buf);
+        6:  270:                        if (res == 1) {
+        1:  271:                            close(i);
+        1:  272:                            FD_CLR(i, &master);
+        -:  273:                        }
+        -:  274:                    }
+        -:  275:                }
+        -:  276:            }
+        -:  277:        }
+        -:  278:    }
+        1:  279:    printf("Server exited.\n");
+        1:  280:    return 0;
+        -:  281:}

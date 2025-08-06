@@ -1,0 +1,90 @@
+        -:    0:Source:atom_supplier.c
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <errno.h>
+        -:    6:#include <sys/socket.h>
+        -:    7:#include <arpa/inet.h>
+        -:    8:#include <netdb.h>
+        -:    9:#include <sys/select.h>
+        -:   10:
+        -:   11:#define BUF_SIZE 1024
+        -:   12:
+        6:   13:int main(int argc, char *argv[]) {
+        6:   14:    if (argc != 3) {
+        1:   15:        fprintf(stderr, "Usage: %s <server> <port>\n", argv[0]);
+        1:   16:        exit(1);
+        -:   17:    }
+        5:   18:    char *server = argv[1];
+        5:   19:    int port = atoi(argv[2]);
+        -:   20:    int sockfd;
+        -:   21:    struct sockaddr_in serv_addr;
+        -:   22:    struct hostent *he;
+        -:   23:
+        5:   24:    if ((he = gethostbyname(server)) == NULL) {
+        2:   25:        perror("gethostbyname"); exit(1);
+        -:   26:    }
+        -:   27:
+        3:   28:    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    #####:   29:        perror("socket"); exit(1);
+        -:   30:    }
+        -:   31:
+        3:   32:    memset(&serv_addr, 0, sizeof(serv_addr));
+        3:   33:    serv_addr.sin_family = AF_INET;
+        3:   34:    serv_addr.sin_port = htons(port);
+        3:   35:    memcpy(&serv_addr.sin_addr, he->h_addr, he->h_length);
+        -:   36:
+        3:   37:    if (connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+        1:   38:        perror("connect"); close(sockfd); exit(1);
+        -:   39:    }
+        -:   40:
+        2:   41:    printf("Connected to warehouse server. Type commands (e.g., ADD CARBON 5), or EXIT to quit:\n");
+        -:   42:
+        -:   43:    fd_set master;
+        2:   44:    int fdmax = (sockfd > STDIN_FILENO) ? sockfd : STDIN_FILENO;
+        -:   45:    char buf[BUF_SIZE];
+        -:   46:
+        2:   47:    int running = 1;
+        8:   48:    while (running) {
+      102:   49:        FD_ZERO(&master);
+        6:   50:        FD_SET(STDIN_FILENO, &master);
+        6:   51:        FD_SET(sockfd, &master);
+        -:   52:
+        6:   53:        if (select(fdmax+1, &master, NULL, NULL, NULL) == -1) {
+    #####:   54:            perror("select");
+    #####:   55:            break;
+        -:   56:        }
+        -:   57:
+        -:   58:        // בדיקת קלט מהשרת
+        6:   59:        if (FD_ISSET(sockfd, &master)) {
+        1:   60:            int n = recv(sockfd, buf, sizeof(buf)-1, 0);
+        1:   61:            if (n == 0) {
+        1:   62:                printf("Connection closed by server (possibly due to SHUTDOWN).\n");
+        1:   63:                break;
+    #####:   64:            } else if (n < 0) {
+    #####:   65:                perror("recv");
+    #####:   66:                break;
+        -:   67:            } else {
+    #####:   68:                buf[n] = '\0';
+        -:   69:            }
+        -:   70:        }
+        -:   71:
+        -:   72:        // בדיקת קלט מהמשתמש
+        5:   73:        if (FD_ISSET(STDIN_FILENO, &master)) {
+        5:   74:            if (fgets(buf, sizeof(buf), stdin) == NULL) {
+        -:   75:                // EOF מקלט
+    #####:   76:                printf("Input closed.\n");
+    #####:   77:                break;
+        -:   78:            }
+        5:   79:            send(sockfd, buf, strlen(buf), 0);
+        5:   80:            if (strncmp(buf, "EXIT", 4) == 0) {
+        1:   81:                printf("Closing connection by user request.\n");
+        1:   82:                break;
+        -:   83:            }
+        -:   84:        }
+        -:   85:    }
+        -:   86:
+        2:   87:    close(sockfd);
+        2:   88:    return 0;
+        -:   89:}
